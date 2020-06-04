@@ -1,0 +1,1502 @@
+Public Sub CalculateAll()
+'********************************************************************************************************************************
+'CalculateAll() calculates means and standard deviations of actual inertia measurements of small populations.
+'(less than 60). Due to a small sample population, their normal standard deviations need to be corrected.
+'The National Institute of Standards and Technology recommends 95% confidence level (or 2 sigma).
+'
+'This VBA script is inspired by a SAWE paper No.3360 shown on the reference below.
+'
+'This script contains two main subs. The CalculateStatistic calculates means and standard deviations of each part group of samples.
+'The CalculateComposite puts the results of the sample groups into one table and calculates their inertia data as a composite
+'assembly.
+'
+'Collections are used extensively to store mass properties data using Class Module. Instance of class modules has properties to
+'store data/information and has their own methods to display their parameters into Intermediate Windows and Worksheets.
+'
+'Author : Jerry Ramos
+'LinkedIn: https://www.linkedin.com/in/jerry-ramos-51288b5/
+'URL: www.mass-talent.ca
+'Date   : Jun 1, 2020
+'Reference : Robert L. Zimmerman, John H. Nakai, SAWE paper number 3360, Are You Sure? - Uncertainty In Mass Properties
+'Engineering, 2005
+'********************************************************************************************************************************
+    On Error GoTo eh
+    
+    Dim ws As Worksheet
+    
+    utlClearCompositeTable
+    
+    For Each ws In ThisWorkbook.Worksheets
+        If ws.CodeName <> "shComposite" And ws.CodeName <> "shNote" And ws.CodeName <> "Sheet1" Then
+            Call CalculateStatistic(ws)
+        End If
+    Next
+    
+    Call CalculateComposite
+    
+Done:
+    Exit Sub
+eh:
+    ' All errors will jump to here
+    MsgBox Err.Source & ": The following error occured  " & Err.description
+End Sub
+
+Option Explicit
+
+modClickEvents:
+Public Sub CalculateStatistic_Click()
+    
+    On Error GoTo eh
+    
+    Dim ws As Worksheet
+    
+    utlClearCompositeTable
+    
+    For Each ws In ThisWorkbook.Worksheets
+        If ws.CodeName <> "shComposite" And ws.CodeName <> "shNote" And ws.CodeName <> "Sheet1" Then
+            Call CalculateStatistic(ws)
+        End If
+    Next
+    
+Done:
+    Exit Sub
+eh:
+    ' All errors will jump to here
+    MsgBox Err.Source & ": The following error occured  " & Err.description
+End Sub
+Public Sub CalculateAll_Click()
+    Call CalculateAll
+End Sub
+
+Option Explicit
+
+Enum ReadCompositeColumns
+    rccSerialNumber = 1
+    rccDescription1 = rccSerialNumber + 1
+    rccMass = rccDescription1 + 1
+    rccXcg = rccMass + 1
+    rccYcg = rccXcg + 1
+    rccZcg = rccYcg + 1
+    rccIxx = rccZcg + 1
+    rccIyy = rccIxx + 1
+    rccIzz = rccIyy + 1
+    rccIxy = rccIzz + 1
+    rccIxz = rccIxy + 1
+    rccIyz = rccIxz + 1
+    rccDescription2 = rccIyz + 1
+    rccsdMass = rccDescription2 + 1
+    rccsdXcg = rccsdMass + 1
+    rccsdYcg = rccsdXcg + 1
+    rccsdZcg = rccsdYcg + 1
+    rccsdIxx = rccsdZcg + 1
+    rccsdIyy = rccsdIxx + 1
+    rccsdIzz = rccsdIyy + 1
+    rccsdIxy = rccsdIzz + 1
+    rccsdIxz = rccsdIxy + 1
+    rccsdIyz = rccsdIxz + 1
+End Enum
+
+Enum WriteCompositeColumns
+    wccDisplayColumnStart = 16
+    wccMass = wccDisplayColumnStart + 1
+    wccXcg = wccMass + 1
+    wccYcg = wccXcg + 1
+    wccZcg = wccYcg + 1
+    wccIxx = wccZcg + 1
+    wccIyy = wccIxx + 1
+    wccIzz = wccIyy + 1
+    wccIxy = wccIzz + 1
+    wccIxz = wccIxy + 1
+    wccIyz = wccIxz + 1
+End Enum
+
+Public Sub CalculateComposite()
+
+    ' Turn off calculations, events etc.
+    Dim settings As New clsExcelSettings
+    settings.TurnOff
+
+    Dim coll As Collection
+    Dim collMeanComposite As Collection
+    Dim coll95StdDevComposite As Collection
+    Dim wsWorkingSheet As Worksheet
+
+    Set wsWorkingSheet = shComposite  'Preparing to pass a code name where the script has to run
+    ' Read data from the data sheet to the collection
+    Set coll = ReadCompositeData(wsWorkingSheet)
+
+    Set collMeanComposite = CalculateMeanCompositeData(coll)
+    Set coll95StdDevComposite = Calculate95StdDevCompositeData(coll, collMeanComposite)
+
+
+    ' Displaying Calculation Results
+    Call DisplayMeanComposite(collMeanComposite, wsWorkingSheet)
+    Call Display95StdDevComposite(coll95StdDevComposite, wsWorkingSheet)
+
+    'Restore calculations, events etc.
+    settings.Restore
+
+End Sub
+Private Function ReadCompositeData(wsWorkingSheet As Worksheet) As Collection
+'********************************************************************************************************************************
+'This function reads composite data based on specified working sheet
+'
+'********************************************************************************************************************************
+    Dim tableLastRowNumber As Long
+    Dim tableHeaderRowNumber As Long
+    Dim startingTableCellAddress As String
+    
+    'Find the table's header called "Part Number" within the first 10 rows.
+    Dim rgHeaderCell As Range
+    Set rgHeaderCell = shComposite.Range("A1:A10").Find("Part Number")
+
+    'To check if the header "Part Number" exists. It needs to be there
+    If rgHeaderCell Is Nothing Then
+        Debug.Print "The Part Number title is not found"
+    Else
+        tableLastRowNumber = Range("A" & Rows.Count).End(xlUp).row
+        tableHeaderRowNumber = Right(shComposite.Range(rgHeaderCell.Address).AddressLocal, 1)
+        startingTableCellAddress = shComposite.Range(rgHeaderCell.Address).Offset(1, 0).AddressLocal
+        
+        'Check if table has no data
+        If tableLastRowNumber <= tableHeaderRowNumber Then
+            Debug.Print "Nothing to Delete" '- For Testing Purpose Only
+        Else
+            'Assign values to an array
+            Dim arr As Variant
+            arr = Range(startingTableCellAddress & ":W" & tableLastRowNumber).Value
+        End If
+    End If
+    
+    
+    'arr = wsWorkingSheet.ListObjects(tblName).DataBodyRange.Value
+
+    Dim coll As New Collection
+    Dim oCompositeInertiaItem As clsComposite
+    Dim i As Long
+    ' Read through the data
+    For i = LBound(arr, 1) To UBound(arr, 1)
+        
+        ' Create a new cls95PercentStdDev object
+        Set oCompositeInertiaItem = New clsComposite
+
+
+        'Set the values
+        With oCompositeInertiaItem
+        .partNumber = arr(i, rccSerialNumber)
+        .description1 = arr(i, rccDescription1)
+        .meanMass = arr(i, rccMass)
+        .meanXcg = arr(i, rccXcg)
+        .meanYcg = arr(i, rccYcg)
+        .meanZcg = arr(i, rccZcg)
+        .meanIxx = arr(i, rccIxx)
+        .meanIyy = arr(i, rccIyy)
+        .meanIzz = arr(i, rccIzz)
+        .meanIxy = arr(i, rccIxy)
+        .meanIxz = arr(i, rccIxz)
+        .meanIyz = arr(i, rccIyz)
+        .description2 = arr(i, rccDescription2)
+        .sdMass = arr(i, rccsdMass)
+        .sdXcg = arr(i, rccsdXcg)
+        .sdYcg = arr(i, rccsdYcg)
+        .sdZcg = arr(i, rccsdZcg)
+        .sdIxx = arr(i, rccsdIxx)
+        .sdIyy = arr(i, rccsdIyy)
+        .sdIzz = arr(i, rccsdIzz)
+        .sdIxy = arr(i, rccsdIxy)
+        .sdIxz = arr(i, rccsdIxz)
+        .sdIyz = arr(i, rccsdIyz)
+       End With
+    'Display to Immediate - For Testing Purpose Only
+    'oCompositeInertiaItem.DisplayToImmediate
+    
+       ' Add the new cls95PercentStdDev object to the collection
+        coll.Add oCompositeInertiaItem
+
+    Next i
+
+    ' Return the collection
+    Set ReadCompositeData = coll
+
+End Function
+Private Function CalculateMeanCompositeData(coll As Collection) As Collection
+'********************************************************************************************************************************
+'This function calculates the composite standard deviation
+'The collection is then return to its caller.
+'********************************************************************************************************************************
+    Dim key As Variant, oCompositeItem As clsComposite
+    
+    Dim meanWeight As Double
+    
+    Dim xBarComp, yBarComp, zBarComp As Double
+    Dim sd95Xcg, sd95Ycg, sd95Zcg As Double
+
+    
+    Dim meanIxx, meanIyy, meanIzz, meanIxy, meanIxz, meanIyz As Double
+    Dim sumIxx, sumIyy, sumIzz, sumIxy, sumIxz, sumIyz As Double
+    Dim inertiaSumIxx, inertiaSumIyy, inertiaSumIzz, inertiaSumIxy, inertiaSumIxz, inertiaSumIyz As Double
+
+    
+    Dim wx, wy, wz As Double
+    Dim wx2, wy2, wz2 As Double
+    Dim wxy, wxz, wyz As Double
+    
+    meanWeight = 0
+    xBarComp = 0
+    yBarComp = 0
+    zBarComp = 0
+    sumIxx = 0
+    sumIyy = 0
+    sumIzz = 0
+    sumIxy = 0
+    sumIxz = 0
+    sumIyz = 0
+    inertiaSumIxx = 0
+    inertiaSumIyy = 0
+    inertiaSumIzz = 0
+    inertiaSumIxy = 0
+    inertiaSumIxz = 0
+    inertiaSumIyz = 0
+    
+    wx = 0
+    wy = 0
+    wz = 0
+    wx2 = 0
+    wy2 = 0
+    wz2 = 0
+    wxy = 0
+    wxz = 0
+    wyz = 0
+
+    
+    ' Read through the collection to calculate total composite weight and xBar,yBar and zBar
+    For Each oCompositeItem In coll
+        With oCompositeItem
+          
+          meanWeight = meanWeight + .meanMass
+   
+          wx = wx + .meanMass * .meanXcg
+          wy = wy + .meanMass * .meanYcg
+          wz = wz + .meanMass * .meanZcg
+
+          wx2 = wx2 + .meanMass * .meanXcg * .meanXcg
+          wy2 = wy2 + .meanMass * .meanYcg * .meanYcg
+          wz2 = wz2 + .meanMass * .meanZcg * .meanZcg
+          wxy = wxy + .meanMass * .meanXcg * .meanYcg
+          wxz = wxz + .meanMass * .meanXcg * .meanZcg
+          wyz = wyz + .meanMass * .meanYcg * .meanZcg
+        
+          sumIxx = sumIxx + .meanIxx
+          sumIyy = sumIyy + .meanIyy
+          sumIzz = sumIzz + .meanIzz
+          sumIxy = sumIxy + .meanIxy
+          sumIxz = sumIxz + .meanIxz
+          sumIyz = sumIyz + .meanIyz
+          
+        End With
+    Next
+    
+    
+    xBarComp = wx / meanWeight
+    yBarComp = wy / meanWeight
+    zBarComp = wz / meanWeight
+
+    inertiaSumIxx = sumIxx + wy2 + wz2 - meanWeight * (yBarComp ^ 2 + zBarComp ^ 2)
+    inertiaSumIyy = sumIyy + wx2 + wz2 - meanWeight * (xBarComp ^ 2 + zBarComp ^ 2)
+    inertiaSumIzz = sumIzz + wx2 + wz2 - meanWeight * (xBarComp ^ 2 + yBarComp ^ 2)
+    inertiaSumIxy = sumIxy + wxy - meanWeight * (xBarComp * yBarComp)
+    inertiaSumIxz = sumIxz + wxz - meanWeight * (xBarComp * zBarComp)
+    inertiaSumIyz = sumIyz + wyz - meanWeight * (yBarComp * zBarComp)
+    
+    'A new collection is created to store the calculation result
+    Dim collMeanComposite As New Collection
+    Dim oCompositeItemTotal As clsCompositeMean
+    
+     ' Create a new cls95PercentStdDev object
+        Set oCompositeItemTotal = New clsCompositeMean
+        
+        'Set the values
+        With oCompositeItemTotal
+        .meanCompWeight = meanWeight
+        .meanCompXcg = xBarComp
+        .meanCompYcg = yBarComp
+        .meanCompZcg = zBarComp
+        .meanCompIxx = inertiaSumIxx
+        .meanCompIyy = inertiaSumIyy
+        .meanCompIzz = inertiaSumIzz
+        .meanCompIxy = inertiaSumIxy
+        .meanCompIxz = inertiaSumIxz
+        .meanCompIyz = inertiaSumIyz
+
+       End With
+
+    'Print Inertia Result - For Testing Purpose Only
+    'oCompositeItemTotal.DisplayToImmediate
+
+        
+    ' Add the new cls95PercentStdDevTotal object to the collection
+    collMeanComposite.Add oCompositeItemTotal
+        
+    ' Return the collection of cls95PercentStdDevTotal object
+    Set CalculateMeanCompositeData = collMeanComposite
+    
+End Function
+Private Function Calculate95StdDevCompositeData(coll As Collection, collMeanComposite As Collection) As Collection
+'********************************************************************************************************************************
+'This function calculates the 95% Confidence Level Standard Deviation of composite parts based on combinations
+'of parts to constitute a composite part.
+'
+'********************************************************************************************************************************
+    Dim oCompositeData As clsComposite
+    Dim oCompositeMean As clsCompositeMean
+    
+    
+    Set oCompositeMean = New clsCompositeMean
+    
+    Dim varWeight, varXcg, varYcg, varZcg As Double
+    Dim varIxx, varIyy, varIzz, varIxy, varIxz, varIyz As Double
+    Dim meanCompWeight, meanCompXcg, meanCompYcg, meanCompZcg, meanCompIxx, meanCompIyy, meanCompIzz, meanCompIxy, meanCompIxz, meanCompIyz As Double
+    Dim sdWeight, sdXcg, sdYcg, sdZcg, sdIxx, sdIyy, sdIzz, sdIxy, sdIxz, sdIyz As Double
+    
+    meanCompWeight = 0 'This variable to hold the Total Weight of the composite assembly
+    meanCompXcg = 0 'This variable to hold the X bar of the composite assembly
+    meanCompYcg = 0 'This variable to hold the Y bar of the composite assembly
+    meanCompZcg = 0 'This variable to hold the Z bar of the composite assembly
+    meanCompIxx = 0
+    meanCompIyy = 0
+    meanCompIzz = 0
+    meanCompIxy = 0
+    meanCompIxz = 0
+    meanCompIyz = 0
+    
+    varWeight = 0
+    varXcg = 0
+    varYcg = 0
+    varZcg = 0
+    varIxx = 0
+    varIyy = 0
+    varIzz = 0
+    varIxy = 0
+    varIxz = 0
+    varIyz = 0
+    
+    For Each oCompositeMean In collMeanComposite
+        With oCompositeMean
+            meanCompWeight = .meanCompWeight
+            meanCompXcg = .meanCompXcg
+            meanCompYcg = .meanCompYcg
+            meanCompZcg = .meanCompZcg
+            meanCompIxx = .meanCompIxx
+            meanCompIyy = .meanCompIyy
+            meanCompIzz = .meanCompIzz
+            meanCompIxy = .meanCompIxy
+            meanCompIxz = .meanCompIxz
+            meanCompIyz = .meanCompIyz
+        End With
+    Next
+    
+    sdWeight = 0 'The "sd" prefix is defined as adjusted normal standard distribution
+    sdXcg = 0
+    sdYcg = 0
+    sdZcg = 0
+    sdIxx = 0
+    sdIyy = 0
+    sdIzz = 0
+    sdIxy = 0
+    sdIxz = 0
+    sdIyz = 0
+    
+    Set oCompositeData = New clsComposite
+    
+    For Each oCompositeData In coll
+        With oCompositeData
+            varWeight = varWeight + .sdMass ^ 2
+            varXcg = varXcg + (.meanMass * .sdXcg) ^ 2 + (.sdMass * (.meanXcg - meanCompXcg)) ^ 2
+            varYcg = varYcg + (.meanMass * .sdYcg) ^ 2 + (.sdMass * (.meanYcg - meanCompYcg)) ^ 2
+            varZcg = varZcg + (.meanMass * .sdZcg) ^ 2 + (.sdMass * (.meanZcg - meanCompZcg)) ^ 2
+            varIxx = varIxx + .sdIxx ^ 2 + (2 * .meanMass * (.meanYcg - meanCompYcg) * .sdYcg) ^ 2 + (2 * .meanMass * _
+            (.meanZcg - meanCompZcg) * .sdZcg) ^ 2 + (((.meanYcg - meanCompYcg) ^ 2 + (.meanZcg - meanCompZcg) ^ 2) * _
+            .sdMass) ^ 2
+            varIyy = varIyy + .sdIyy ^ 2 + (2 * .meanMass * (.meanXcg - meanCompXcg) * .sdXcg) ^ 2 + (2 * .meanMass * _
+            (.meanZcg - meanCompZcg) * .sdZcg) ^ 2 + (((.meanXcg - meanCompXcg) ^ 2 + (.meanZcg - meanCompZcg) ^ 2) * _
+            .sdMass) ^ 2
+            varIzz = varIzz + .sdIzz ^ 2 + (2 * .meanMass * (.meanXcg - meanCompXcg) * .sdYcg) ^ 2 + (2 * .meanMass * _
+            (.meanYcg - meanCompYcg) * .sdYcg) ^ 2 + (((.meanXcg - meanCompXcg) ^ 2 + (.meanYcg - meanCompYcg) ^ 2) * _
+            .sdMass) ^ 2
+            varIxy = varIxy + .sdIxy ^ 2 + ((.meanXcg - meanCompXcg) * .meanMass * .sdYcg) ^ 2 + ((.meanXcg - meanCompXcg) * _
+            (.meanYcg - meanCompYcg) * .sdMass) ^ 2 + ((.meanYcg - meanCompYcg) * .meanMass * .sdXcg) ^ 2
+            varIxz = varIxz + .sdIxz ^ 2 + ((.meanXcg - meanCompXcg) * .meanMass * .sdZcg) ^ 2 + ((.meanXcg - meanCompXcg) * _
+            (.meanZcg - meanCompZcg) * .sdMass) ^ 2 + ((.meanZcg - meanCompZcg) * .meanMass * .sdXcg) ^ 2
+            varIyz = varIyz + .sdIyz ^ 2 + ((.meanYcg - meanCompYcg) * .meanMass * .sdZcg) ^ 2 + ((.meanYcg - meanCompYcg) * _
+            (.meanZcg - meanCompZcg) * .sdMass) ^ 2 + ((.meanYcg - meanCompYcg) * .meanMass * .sdYcg) ^ 2
+        End With
+    Next
+    
+    sdWeight = varWeight ^ 0.5
+    sdXcg = (varXcg ^ 0.5) / meanCompWeight 'meanCompWeight holds the total mean weights (total composite weigth)
+    sdYcg = (varYcg ^ 0.5) / meanCompWeight 'meanCompWeight holds the total mean weights (total composite weigth)
+    sdZcg = (varZcg ^ 0.5) / meanCompWeight 'meanCompWeight holds the total mean weights (total composite weigth)
+    sdIxx = varIxx ^ 0.5
+    sdIyy = varIyy ^ 0.5
+    sdIzz = varIzz ^ 0.5
+    sdIxy = varIxy ^ 0.5
+    sdIxz = varIxz ^ 0.5
+    sdIyz = varIyz ^ 0.5
+    
+    'Display result to immediate window - For Testing Purpose Only
+    'Debug.Print sdWeightTotal, sdXcg, sdYcg, sdZcg, sdIxx, sdIyy, sdIzz, sdIxy, sdIxz, sdIyz
+    
+    Dim collCompositeStdDev As New Collection
+    Dim oCompositeStdDev As clsComposite95PctStdDev
+    
+    ' Create a new clsComposite95PctStdDev object called oNormalStdDev
+    Set oCompositeStdDev = New clsComposite95PctStdDev
+    
+    'Assign the standard deviation data into oNormalStdDev object
+    With oCompositeStdDev
+        .compStdDevWeight = sdWeight
+        .compStdDevXcg = sdXcg
+        .compStdDevYcg = sdYcg
+        .compStdDevZcg = sdZcg
+        .compStdDevIxx = sdIxx
+        .compStdDevIyy = sdIyy
+        .compStdDevIzz = sdIzz
+        .compStdDevIxy = sdIxy
+        .compStdDevIxz = sdIxz
+        .compStdDevIyz = sdIyz
+    End With
+    
+    'Display results - For Testing Purpose Only
+    oCompositeStdDev.DisplayToImmediate
+    
+    'Add the oCompositeStdDev into the collection
+    collCompositeStdDev.Add oCompositeStdDev
+    
+    'Return the collNormalStdDev collection
+    Set Calculate95StdDevCompositeData = collCompositeStdDev
+    
+End Function
+Private Sub DisplayMeanComposite(collToBeDisplayed As Collection, currentWorkingSheet As Worksheet)
+'********************************************************************************************************************************
+'* This sub displays the collection of mean composite data
+'********************************************************************************************************************************
+    Dim oMeanItem As clsCompositeMean
+    Set oMeanItem = New clsCompositeMean
+    
+    For Each oMeanItem In collToBeDisplayed
+        Set oMeanItem.currentWorkingSheet = currentWorkingSheet 'Store current working sheet into an object
+        oMeanItem.DisplayToImmediate
+        oMeanItem.DisplayToComposite (wccMeanDisplayColumnStart)
+        
+    Next
+End Sub
+Private Sub Display95StdDevComposite(collToBeDisplayed As Collection, currentWorkingSheet As Worksheet)
+'********************************************************************************************************************************
+'* This sub displays the 95 % Confidence Level Standard Deviation of the composite.(combinations of all parts)
+'********************************************************************************************************************************
+    Dim oStdDevCompositeItem As clsComposite95PctStdDev
+    Set oStdDevCompositeItem = New clsComposite95PctStdDev
+    
+    For Each oStdDevCompositeItem In collToBeDisplayed
+        Set oStdDevCompositeItem.currentWorkingSheet = currentWorkingSheet 'Store current working sheet into an object
+        oStdDevCompositeItem.DisplayToImmediate
+        oStdDevCompositeItem.DisplayToComposite (wcc95PctDisplayColumnStart)
+    Next
+End Sub
+
+Option Explicit
+
+Enum ReadColumns
+    rcSerialNumber = 1
+    rcMass = rcSerialNumber + 1
+    rcXcg = rcMass + 1
+    rcYcg = rcXcg + 1
+    rcZcg = rcYcg + 1
+    rcIxx = rcZcg + 1
+    rcIyy = rcIxx + 1
+    rcIzz = rcIyy + 1
+    rcIxy = rcIzz + 1
+    rcIxz = rcIxy + 1
+    rcIyz = rcIxz + 1
+End Enum
+
+Enum WriteColumns
+    wcDisplayColumnStart = 16
+    wcMass = wcDisplayColumnStart + 1
+    wcXcg = wcMass + 1
+    wcYcg = wcXcg + 1
+    wcZcg = wcYcg + 1
+    wcIxx = wcZcg + 1
+    wcIyy = wcIxx + 1
+    wcIzz = wcIyy + 1
+    wcIxy = wcIzz + 1
+    wcIxz = wcIxy + 1
+    wcIyz = wcIxz + 1
+End Enum
+
+Enum WriteRow
+    wrHeader = 1
+    wrStartRow = 2
+End Enum
+
+Enum WriteColumnComposite
+    wccMeanDisplayColumnStart = 2
+    wcc95PctDisplayColumnStart = 13
+End Enum
+    
+Public Const ConfidenceLevel As Double = 0.95
+Public Sub CalculateStatistic(wsWorkingSheet As Worksheet)
+'********************************************************************************************************************************
+'CalculateStatistics reads samples of mass properties actual measurements. It then calculates their mean,
+'normal standard deviation and corrects the normal standard distribution through the use of the Student's t
+'distribution. Correction is needed due to small sample population. The National Institute of Standards and
+'Technology recommends 95% confidence level.
+'
+'Collections are used to store mass properties data using Class Module. Instance of class modules used to retain data
+'and are able to print their associate parameters to Intermediate Windows and Worksheets
+'
+'FUNCTION:
+'   - To read data from a table or multiple tables consisting actual measurement samples. Each tab consists only one table.
+'   - To calculate the mean, normal standard deviation and Student's t standard deviation from the sample data.
+'   - To display the results in each table's respective tab.
+'   - To display the results in "Composite Parts" tab so that they can be summarized as a composite assy by the next stage.
+'INPUT: It needs the working sheet to work on.
+'
+'Author : Jerry Ramos
+'Date   : Jun 1, 2020
+'********************************************************************************************************************************
+
+    ' Turn off calculations, events etc.
+    Dim settings As New clsExcelSettings
+    settings.TurnOff
+    
+    Dim coll As Collection
+    Dim collMean As Collection
+    Dim collNormalStdDev As Collection
+    Dim coll95PercentConfidenceStdDev As Collection
+    
+    'Dim wsWorkingSheet As Worksheet    'For Testing Purpose Only
+    'Set wsWorkingSheet = shDataPart1   'For Testing Purpose Only
+    
+    'Read data from the specified working sheet and assign them to a collection
+    Set coll = ReadData(wsWorkingSheet)
+
+    'Calculate Sample Size
+    Dim sampleSize As Integer: sampleSize = coll.Count
+    
+    'Calculating Data
+    Set collMean = CalculateMean(coll)
+    Set collNormalStdDev = CalculateNormalStanDev(coll, collMean)
+    Set coll95PercentConfidenceStdDev = Calculate95PercentConfidenceStdDev(collNormalStdDev, sampleSize, ConfidenceLevel)
+
+    'Displaying Calculation Result
+    Call DisplayMean(collMean, wsWorkingSheet)
+    Call DisplayNormalStdDev(collNormalStdDev, wsWorkingSheet)
+    Call Display95PctStdDev(coll95PercentConfidenceStdDev, wsWorkingSheet)
+       
+    'Restore calculations, events etc.
+    settings.Restore
+    
+End Sub
+
+' Description: Reads the data from the Data worksheet to collection
+
+Private Function ReadData(wsWorkingSheet As Worksheet) As Collection
+    
+    'Declare and create a collection to store data to be read.
+    Dim coll As New Collection
+    Dim oInertia As clsInertiaData
+
+    'This code sniplet gets table name from current working sheet. The table name is used to extract its content
+    'into an array on the next step
+    Dim tbl As ListObject
+    Dim sht As Worksheet
+    Dim tblName As String
+
+    'Loop through each sheet and table in the workbook
+        For Each tbl In wsWorkingSheet.ListObjects
+                tblName = tbl.Name
+        Next tbl
+
+    'Declare an array and copy contents from a table (tblName) in the current working sheet to an array (arr)
+    Dim arr As Variant
+    arr = wsWorkingSheet.ListObjects(tblName).DataBodyRange.Value
+    
+    'Read through the data from the array(arr) into instances of class clsInertiaData
+    'Each part has its own object/instance called oInertia
+    Dim i As Long
+    For i = LBound(arr, 1) To UBound(arr, 1)
+   
+        ' Create a new clsInertiaData object
+        Set oInertia = New clsInertiaData
+        
+        'Set the values
+        With oInertia
+        .serialNumber = arr(i, rcSerialNumber)
+        .mass = arr(i, rcMass)
+        .Xcg = arr(i, rcXcg)
+        .Ycg = arr(i, rcYcg)
+        .Zcg = arr(i, rcZcg)
+        .Ixx = arr(i, rcIxx)
+        .Iyy = arr(i, rcIyy)
+        .Izz = arr(i, rcIzz)
+        .Ixy = arr(i, rcIxy)
+        .Ixz = arr(i, rcIxz)
+        .Iyz = arr(i, rcIyz)
+       End With
+
+       ' Add the new clsInertiaData object to the collection
+        coll.Add oInertia
+        
+    Next i
+
+    ' Return the collection
+    Set ReadData = coll
+    
+End Function
+Private Sub WriteToImmediate(coll As Collection)
+    
+           Dim key As Variant, oInertia As clsInertiaData
+    ' Read through the dictionary
+    For Each oInertia In coll
+        
+        With oInertia
+            ' Write to the Immediate Window (Ctrl + G)
+            Debug.Print .serialNumber, .mass, .Xcg, .Ycg, .Zcg, .Ixx, .Iyy, .Izz, .Ixy, .Ixz, .Iyz
+        End With
+        
+    Next
+    
+End Sub
+Private Function CalculateMean(coll As Collection) As Collection
+'********************************************************************************************************************************
+'This function calculates the mean and total inertia of the measured sample population
+'A new collection is created to store the result of the calculations (both total inertia and mean data).
+'The collection is then return to its caller.
+'********************************************************************************************************************************
+    
+    Dim key As Variant, oInertia As clsInertiaData
+    
+    Dim weightTotal As Double
+    Dim meanWeightTotal As Double
+    
+    Dim xBar, yBar, zBar As Double
+    Dim meanXcg, meanYcg, meanZcg As Double
+    Dim sumXcg, sumYcg, sumZcg As Double
+    
+    Dim meanIxx, meanIyy, meanIzz, meanIxy, meanIxz, meanIyz As Double
+    Dim sumIxx, sumIyy, sumIzz, sumIxy, sumIxz, sumIyz As Double
+    Dim inertiaSumIxx, inertiaSumIyy, inertiaSumIzz, inertiaSumIxy, inertiaSumIxz, inertiaSumIyz As Double
+    
+    Dim wx, wy, wz As Double
+    Dim wx2, wy2, wz2 As Double
+    Dim wxy, wxz, wyz As Double
+    
+    weightTotal = 0
+    xBar = 0
+    yBar = 0
+    zBar = 0
+    sumXcg = 0
+    sumYcg = 0
+    sumZcg = 0
+    sumIxx = 0
+    sumIyy = 0
+    sumIzz = 0
+    sumIxy = 0
+    sumIxz = 0
+    sumIyz = 0
+    inertiaSumIxx = 0
+    inertiaSumIyy = 0
+    inertiaSumIzz = 0
+    inertiaSumIxy = 0
+    inertiaSumIxz = 0
+    inertiaSumIyz = 0
+    wx = 0
+    wy = 0
+    wz = 0
+    wx2 = 0
+    wy2 = 0
+    wz2 = 0
+    wxy = 0
+    wxz = 0
+    wyz = 0
+    
+    ' Read through the collection
+    For Each oInertia In coll
+        With oInertia
+        
+          weightTotal = weightTotal + .mass
+          sumXcg = sumXcg + .Xcg
+          sumYcg = sumYcg + .Ycg
+          sumZcg = sumZcg + .Zcg
+          wx = wx + .mass * .Xcg
+          wy = wy + .mass * .Ycg
+          wz = wz + .mass * .Zcg
+          wx2 = wx2 + .mass * .Xcg * .Xcg
+          wy2 = wy2 + .mass * .Ycg * .Ycg
+          wz2 = wz2 + .mass * .Zcg * .Zcg
+          wxy = wxy + .mass * .Xcg * .Ycg
+          wxz = wxz + .mass * .Xcg * .Zcg
+          wyz = wyz + .mass * .Ycg * .Zcg
+        
+          sumIxx = sumIxx + .Ixx
+          sumIyy = sumIyy + .Iyy
+          sumIzz = sumIzz + .Izz
+          sumIxy = sumIxy + .Ixy
+          sumIxz = sumIxz + .Ixz
+          sumIyz = sumIyz + .Iyz
+
+        End With
+    Next
+    
+    xBar = wx / weightTotal
+    yBar = wy / weightTotal
+    zBar = wz / weightTotal
+    meanWeightTotal = weightTotal / coll.Count
+    meanXcg = sumXcg / coll.Count
+    meanYcg = sumYcg / coll.Count
+    meanZcg = sumZcg / coll.Count
+    meanIxx = sumIxx / coll.Count
+    meanIyy = sumIyy / coll.Count
+    meanIzz = sumIzz / coll.Count
+    meanIxy = sumIxy / coll.Count
+    meanIxz = sumIxz / coll.Count
+    meanIyz = sumIyz / coll.Count
+    
+    inertiaSumIxx = sumIxx + wy2 + wz2 - weightTotal * (yBar ^ 2 + zBar ^ 2)
+    inertiaSumIyy = sumIyy + wx2 + wz2 - weightTotal * (xBar ^ 2 + zBar ^ 2)
+    inertiaSumIzz = sumIzz + wx2 + wz2 - weightTotal * (xBar ^ 2 + yBar ^ 2)
+    inertiaSumIxy = sumIxy + wxy - weightTotal * (xBar * yBar)
+    inertiaSumIxz = sumIxz + wxz - weightTotal * (xBar * zBar)
+    inertiaSumIyz = sumIyz + wyz - weightTotal * (yBar * zBar)
+    
+    'A new collection is created to store the calculation result
+    Dim collMean As New Collection
+    Dim oInertiaTotal As clsMean
+    
+     ' Create a new clsInertiaData object
+        Set oInertiaTotal = New clsMean
+        
+        'Set the values
+        With oInertiaTotal
+        .weightTotal = weightTotal
+        .xBar = xBar
+        .yBar = yBar
+        .zBar = zBar
+        .inertiaSumIxx = inertiaSumIxx
+        .inertiaSumIyy = inertiaSumIyy
+        .inertiaSumIzz = inertiaSumIzz
+        .inertiaSumIxy = inertiaSumIxy
+        .inertiaSumIxz = inertiaSumIxz
+        .inertiaSumIyz = inertiaSumIyz
+        .meanWeightTotal = meanWeightTotal
+        .meanXcg = meanXcg
+        .meanYcg = meanYcg
+        .meanZcg = meanZcg
+        .meanIxx = meanIxx
+        .meanIyy = meanIyy
+        .meanIzz = meanIzz
+        .meanIxy = meanIxy
+        .meanIxz = meanIxz
+        .meanIyz = meanIyz
+
+       End With
+
+    'Print Inertia Result - For Testing Purpose Only
+'    oInertiaTotal.DisplayToImmediate
+'    oInertiaTotal.Display (wcDisplayColumnStart)
+        
+    ' Add the new clsInertiaDataTotal object to the collection
+    collMean.Add oInertiaTotal
+        
+    ' Return the collection of clsInertiaDataTotal object
+    Set CalculateMean = collMean
+
+End Function
+Private Function CalculateNormalStanDev(coll As Collection, collMean As Collection) As Collection
+'********************************************************************************************************************************
+'This function calculates normal (Gaussian) standard deviation (1 sigma) from a sample population
+'
+'A new collection is created to store the result of the calculations (normal standard deviation). The normal standard
+'distribution data is needed to calculate the 95% confidence level standard deviation of Student's t distribution.
+'The collection is then return to its caller.
+'********************************************************************************************************************************
+    
+    Dim oInertia As clsInertiaData
+    Dim oInertiaTotal As clsMean
+    
+    Set oInertiaTotal = New clsMean
+    
+    Dim deltaToMeanSquaredWeightTotal, deltaToMeanSquaredXcg, deltaToMeanSquaredYcg, deltaToMeanSquaredZcg As Double
+    Dim deltaToMeanSquaredIxx, deltaToMeanSquaredIyy, deltaToMeanSquaredIzz, deltaToMeanSquaredIxy, deltaToMeanSquaredIxz, _
+    deltaToMeanSquaredIyz As Double
+    Dim meanWeightTotal, meanXcg, meanYcg, meanZcg, meanIxx, meanIyy, meanIzz, meanIxy, meanIxz, meanIyz As Double
+    Dim sdWeightTotal, sdXcg, sdYcg, sdZcg, sdIxx, sdIyy, sdIzz, sdIxy, sdIxz, sdIyz As Double
+    
+    deltaToMeanSquaredWeightTotal = 0
+    deltaToMeanSquaredXcg = 0
+    deltaToMeanSquaredYcg = 0
+    deltaToMeanSquaredZcg = 0
+    deltaToMeanSquaredIxx = 0
+    deltaToMeanSquaredIyy = 0
+    deltaToMeanSquaredIzz = 0
+    deltaToMeanSquaredIxy = 0
+    deltaToMeanSquaredIxz = 0
+    deltaToMeanSquaredIyz = 0
+    
+    For Each oInertiaTotal In collMean
+        With oInertiaTotal
+            meanWeightTotal = .meanWeightTotal
+            meanXcg = .meanXcg
+            meanYcg = .meanYcg
+            meanZcg = .meanZcg
+            meanIxx = .meanIxx
+            meanIyy = .meanIyy
+            meanIzz = .meanIzz
+            meanIxy = .meanIxy
+            meanIxz = .meanIxz
+            meanIyz = .meanIyz
+        End With
+    Next
+    
+    sdWeightTotal = 0
+    sdXcg = 0
+    sdYcg = 0
+    sdZcg = 0
+    sdIxx = 0
+    sdIyy = 0
+    sdIzz = 0
+    sdIxy = 0
+    sdIxz = 0
+    sdIyz = 0
+    
+    Set oInertia = New clsInertiaData
+    
+    For Each oInertia In coll
+        With oInertia
+            deltaToMeanSquaredWeightTotal = deltaToMeanSquaredWeightTotal + (.mass - meanWeightTotal) ^ 2
+            deltaToMeanSquaredXcg = deltaToMeanSquaredXcg + (.Xcg - meanXcg) ^ 2
+            deltaToMeanSquaredYcg = deltaToMeanSquaredYcg + (.Ycg - meanYcg) ^ 2
+            deltaToMeanSquaredZcg = deltaToMeanSquaredZcg + (.Zcg - meanZcg) ^ 2
+            deltaToMeanSquaredIxx = deltaToMeanSquaredIxx + (.Ixx - meanIxx) ^ 2
+            deltaToMeanSquaredIyy = deltaToMeanSquaredIyy + (.Iyy - meanIyy) ^ 2
+            deltaToMeanSquaredIzz = deltaToMeanSquaredIzz + (.Izz - meanIzz) ^ 2
+            deltaToMeanSquaredIxy = deltaToMeanSquaredIxy + (.Ixy - meanIxy) ^ 2
+            deltaToMeanSquaredIxz = deltaToMeanSquaredIxz + (.Ixz - meanIxz) ^ 2
+            deltaToMeanSquaredIyz = deltaToMeanSquaredIyz + (.Iyz - meanIyz) ^ 2
+        End With
+    Next
+    
+    sdWeightTotal = (deltaToMeanSquaredWeightTotal / coll.Count) ^ 0.5
+    sdXcg = (deltaToMeanSquaredXcg / coll.Count) ^ 0.5
+    sdYcg = (deltaToMeanSquaredYcg / coll.Count) ^ 0.5
+    sdZcg = (deltaToMeanSquaredZcg / coll.Count) ^ 0.5
+    sdIxx = (deltaToMeanSquaredIxx / coll.Count) ^ 0.5
+    sdIyy = (deltaToMeanSquaredIyy / coll.Count) ^ 0.5
+    sdIzz = (deltaToMeanSquaredIzz / coll.Count) ^ 0.5
+    sdIxy = (deltaToMeanSquaredIxy / coll.Count) ^ 0.5
+    sdIxz = (deltaToMeanSquaredIxz / coll.Count) ^ 0.5
+    sdIyz = (deltaToMeanSquaredIyz / coll.Count) ^ 0.5
+    
+    'Display result to immediate window - For Testing Purpose Only
+    'Debug.Print sdWeightTotal, sdXcg, sdYcg, sdZcg, sdIxx, sdIyy, sdIzz, sdIxy, sdIxz, sdIyz
+    
+    Dim collNormalStdDev As New Collection
+    Dim oNormalStdDev As clsNormalStdDev
+    
+    ' Create a new clsNormalStdDev object called oNormalStdDev
+    Set oNormalStdDev = New clsNormalStdDev
+    
+    'Assign the standard deviation data into oNormalStdDev object
+    With oNormalStdDev
+        .sdWeightTotal = sdWeightTotal
+        .sdXcg = sdXcg
+        .sdYcg = sdYcg
+        .sdZcg = sdZcg
+        .sdIxx = sdIxx
+        .sdIyy = sdIyy
+        .sdIzz = sdIzz
+        .sdIxy = sdIxy
+        .sdIxz = sdIxz
+        .sdIyz = sdIyz
+    End With
+    
+    'Display results - For Testing Purpose Only
+    'oNormalStdDev.DisplayToImmediate
+    'oNormalStdDev.Display wcDisplayColumnStart
+    
+    'Add the oNormalStdDev into the collection
+    collNormalStdDev.Add oNormalStdDev
+    
+    'Return the collNormalStdDev collection
+    Set CalculateNormalStanDev = collNormalStdDev
+
+End Function
+Private Function Calculate95PercentConfidenceStdDev(collNormalStdDev As Collection, sampleSize As Integer, ConfidenceLevel _
+As Double) As Collection
+'********************************************************************************************************************************
+'This function calculates the 95% Confidence Level standard deviation (2 sigma) from the Student's t Distribution
+'This 95% Confidence Level standard deviation is calculated from t_c (a coefficient from the Student's t distribution
+'as a function of degree of freedom (# of sample - 1) and the confidence level(in our case, it is 95%, hence t_c = t_0.95).
+'This is the implemantion of it; t_c = Application.WorksheetFunction.T_Inv_2T(studentTProbability, degreeOfFreedom)
+'t_c is then multiplied by each item data and by square root of sample/degree of freedom to get the 95% standard deviation.
+'Implementation on total weight : ninetyFivePctStdDevWeight = t_c * ((sampleSize / (sampleSize - 1)) ^ 0.5) * .sdWeightTotal.
+'
+'A new collection is created to store the result of the calculations of 95% Confidence Level Standard Deviation.
+'The collection is then return to its caller.
+'********************************************************************************************************************************
+    
+    Dim oNormalStdDevItem As clsNormalStdDev
+    Set oNormalStdDevItem = New clsNormalStdDev
+    
+    Dim ninetyFivePctStdDevWeight, ninetyFivePctStdDevXcg, ninetyFivePctStdDevYcg, ninetyFivePctStdDevZcg As Double
+    Dim ninetyFivePctStdDevIxx, ninetyFivePctStdDevIyy, ninetyFivePctStdDevIzz As Double
+    Dim ninetyFivePctStdDevIxy, ninetyFivePctStdDevIxz, ninetyFivePctStdDevIyz As Double
+    
+    ninetyFivePctStdDevWeight = 0
+    ninetyFivePctStdDevXcg = 0
+    ninetyFivePctStdDevYcg = 0
+    ninetyFivePctStdDevZcg = 0
+    ninetyFivePctStdDevIxx = 0
+    ninetyFivePctStdDevIyy = 0
+    ninetyFivePctStdDevIzz = 0
+    ninetyFivePctStdDevIxy = 0
+    ninetyFivePctStdDevIxz = 0
+    ninetyFivePctStdDevIyz = 0
+    
+    Dim t_c As Double
+    Dim degreeOfFreedom As Integer: degreeOfFreedom = sampleSize - 1
+    Dim studentTProbability As Double: studentTProbability = (1 - ConfidenceLevel)
+    
+    t_c = Application.WorksheetFunction.T_Inv_2T(studentTProbability, degreeOfFreedom)
+    
+    For Each oNormalStdDevItem In collNormalStdDev
+        With oNormalStdDevItem
+            
+            ninetyFivePctStdDevWeight = t_c * ((sampleSize / (sampleSize - 1)) ^ 0.5) * .sdWeightTotal
+            ninetyFivePctStdDevXcg = t_c * ((sampleSize / (sampleSize - 1)) ^ 0.5) * .sdXcg
+            ninetyFivePctStdDevYcg = t_c * ((sampleSize / (sampleSize - 1)) ^ 0.5) * .sdYcg
+            ninetyFivePctStdDevZcg = t_c * ((sampleSize / (sampleSize - 1)) ^ 0.5) * .sdZcg
+            ninetyFivePctStdDevIxx = t_c * ((sampleSize / (sampleSize - 1)) ^ 0.5) * .sdIxx
+            ninetyFivePctStdDevIyy = t_c * ((sampleSize / (sampleSize - 1)) ^ 0.5) * .sdIyy
+            ninetyFivePctStdDevIzz = t_c * ((sampleSize / (sampleSize - 1)) ^ 0.5) * .sdIzz
+            ninetyFivePctStdDevIxy = t_c * ((sampleSize / (sampleSize - 1)) ^ 0.5) * .sdIxy
+            ninetyFivePctStdDevIxz = t_c * ((sampleSize / (sampleSize - 1)) ^ 0.5) * .sdIxz
+            ninetyFivePctStdDevIyz = t_c * ((sampleSize / (sampleSize - 1)) ^ 0.5) * .sdIyz
+            
+        End With
+    Next
+            
+    'Create a new collection
+    Dim coll95PercentConfidenceStdDev As New Collection
+    Dim o95PercentStdDevItem As cls95PercentStdDev
+    
+    ' Create a new object called o95PercentStdDev
+    Set o95PercentStdDevItem = New cls95PercentStdDev
+    
+    'Assign the standard deviation data into oNormalStdDev object
+    
+        With o95PercentStdDevItem
+            .ninetyFivePctStdDevWeight = ninetyFivePctStdDevWeight
+            .ninetyFivePctStdDevXcg = ninetyFivePctStdDevXcg
+            .ninetyFivePctStdDevYcg = ninetyFivePctStdDevYcg
+            .ninetyFivePctStdDevZcg = ninetyFivePctStdDevZcg
+            .ninetyFivePctStdDevIxx = ninetyFivePctStdDevIxx
+            .ninetyFivePctStdDevIyy = ninetyFivePctStdDevIyy
+            .ninetyFivePctStdDevIzz = ninetyFivePctStdDevIzz
+            .ninetyFivePctStdDevIxy = ninetyFivePctStdDevIxy
+            .ninetyFivePctStdDevIxz = ninetyFivePctStdDevIxz
+            .ninetyFivePctStdDevIyz = ninetyFivePctStdDevIyz
+        End With
+    
+    'oNormalStdDev.DisplayToImmediate
+    o95PercentStdDevItem.DisplayToImmediate
+    'oNormalStdDev.Display wcDisplayColumnStart
+    
+    'Add the object into the collection
+    coll95PercentConfidenceStdDev.Add o95PercentStdDevItem
+    
+    'Return the collNormalStdDev collection
+    Set Calculate95PercentConfidenceStdDev = coll95PercentConfidenceStdDev
+
+End Function
+Private Sub DisplayMean(collToBeDisplayed As Collection, currentWorkingSheet As Worksheet)
+'**********************************************************************************************************
+'* This sub displays the collection of mean data to three different locations (Immediate Window,
+'* current working tab and in the "Composite Parts" tab). The current working information is stored inside
+'* each object's property called currentWorkSheet. This information is passed on from the caller as
+'* a parameter. In turn, this sub passes on the parameter into each object.
+'**********************************************************************************************************
+    
+    Dim oMeanItem As clsMean
+    Set oMeanItem = New clsMean
+    
+    For Each oMeanItem In collToBeDisplayed
+        Set oMeanItem.currentWorkingSheet = currentWorkingSheet 'Store current working sheet into an object
+        oMeanItem.DisplayToImmediate
+        oMeanItem.DisplayToCurrentTab
+        oMeanItem.DisplayToComposite (wccMeanDisplayColumnStart)
+    Next
+End Sub
+Private Sub DisplayNormalStdDev(collToBeDisplayed As Collection, currentWorkingSheet As Worksheet)
+'********************************************************************************************************************************
+' This sub displays the collection of mean data to three different locations (Immediate Window,
+' current working tab and in the "Composite Parts" tab). The current working information is stored inside
+' each object's property called currentWorkSheet. This information is passed on from the caller as
+' a parameter. In turn, this sub passes on the parameter into each object.
+'********************************************************************************************************************************
+    Dim oNormalStdDevItem As clsNormalStdDev
+    Set oNormalStdDevItem = New clsNormalStdDev
+    
+    For Each oNormalStdDevItem In collToBeDisplayed
+        Set oNormalStdDevItem.currentWorkingSheet = currentWorkingSheet 'Store current working sheet into an object
+        oNormalStdDevItem.DisplayToImmediate
+        oNormalStdDevItem.DisplayToCurrentTab
+    Next
+End Sub
+Private Sub Display95PctStdDev(collToBeDisplayed As Collection, currentWorkingSheet As Worksheet)
+'********************************************************************************************************************************
+' This sub displays the collection of mean data to three different locations (Immediate Window,
+' current working tab and in the "Composite Parts" tab). The current working information is stored inside
+' each object's property called currentWorkSheet. This information is passed on from the caller as
+' a parameter. In turn, this sub passes on the parameter into each object.
+'********************************************************************************************************************************
+    Dim o95PctStdDevItem As cls95PercentStdDev
+    Set o95PctStdDevItem = New cls95PercentStdDev
+    
+    For Each o95PctStdDevItem In collToBeDisplayed
+        Set o95PctStdDevItem.currentWorkingSheet = currentWorkingSheet 'Store current working sheet into an object
+        o95PctStdDevItem.DisplayToImmediate
+        o95PctStdDevItem.DisplayToCurrentTab
+        o95PctStdDevItem.DisplayToComposite (wcc95PctDisplayColumnStart)
+    Next
+End Sub
+
+Public Sub utlFormatDecimalPlace(startRow As Integer, startColumn As Integer, numberOfDecimalPlace As Integer, activeSheet _
+As Worksheet)
+'PURPOSE    : Function to format the cells
+'INPUT      : starting row and column with the number of decimal place. Current worksheet info is needed as well to apply
+'the formatting.
+
+    Dim sActiveSheet As String
+    Dim decimalPlace As String
+    
+    sActiveSheet = activeSheet.CodeName
+    decimalPlace = String(numberOfDecimalPlace, "0")
+    
+    If sActiveSheet = "shComposite" Then
+            shComposite.Cells(startRow, startColumn).Resize(1, 11).NumberFormat = "0." & decimalPlace
+    Else
+    activeSheet.Cells(startRow, startColumn).Resize(1, 11).NumberFormat = "0." & decimalPlace
+    End If
+    
+End Sub
+Function utlLastRowColumn(sht As Worksheet, compositeStartColumn As Integer, RowColumn As String) As Integer
+'PURPOSE: Function To Return the Last Row Or Column Number In the Active Spreadsheet
+'INPUT: "R" or "C" to determine which direction to search (Parameter: RowColumn)
+'https://www.thespreadsheetguru.com/blog/2014/7/7/5-different-ways-to-find-the-last-row-or-last-column-using-vba
+'By: Tim
+
+Select Case LCase(Left(RowColumn, 1)) 'If they put in 'row' or column instead of 'r' or 'c'.
+  Case "c"
+    utlLastRowColumn = sht.Cells.Find("*", LookIn:=xlFormulas, SearchOrder:=xlByColumns, _
+    SearchDirection:=xlPrevious).Column
+  Case "r"
+    utlLastRowColumn = sht.Cells(sht.Rows.Count, compositeStartColumn).End(xlUp).row
+  Case Else
+   utlLastRowColumn = 1
+End Select
+
+End Function
+Public Sub utlClearCompositeTable()
+    '******************************************************************************************************************
+    'This sub clears data under the headers from column A to column W.
+    'Steps:
+    '   1.  Find the header's row.
+    '   2.  Check if the header's title exists. If not, a message is shown in the Immediate window.
+    '   3.  Find the last empty table's row and the its header's row.
+    '   4.  If the last empty table's row is equal or less than its header's row, it means table has no data to delete
+    '   5.  If the table has data to delete, then it clears the data starting from a cell right under header to the
+    '       the last cell (column W and the last row on the table)
+    '*******************************************************************************************************************
+    Dim tableLastRowNumber As Long
+    Dim tableHeaderRowNumber As Long
+    Dim startingTableCellAddress As String
+    
+    'Find the table's header called "Part Number" within the first 10 rows.
+    Dim rgHeaderCell As Range
+    Set rgHeaderCell = shComposite.Range("A1:A10").Find("Part Number")
+
+    'To check if the header "Part Number" exists. It needs to be there
+    If rgHeaderCell Is Nothing Then
+        Debug.Print "The Part Number title is not found"
+    Else
+        tableLastRowNumber = shComposite.Range("A" & Rows.Count).End(xlUp).row
+        tableHeaderRowNumber = Right(shComposite.Range(rgHeaderCell.Address).AddressLocal, 1)
+        startingTableCellAddress = shComposite.Range(rgHeaderCell.Address).Offset(1, 0).AddressLocal
+        
+        'Check if table has no data
+        If tableLastRowNumber <= tableHeaderRowNumber Then
+            Debug.Print "Nothing to Delete"
+        Else
+            
+            'Clear the data
+            shComposite.Range(startingTableCellAddress & ":W" & tableLastRowNumber).Clear
+        End If
+    End If
+    
+End Sub
+'**************************************************************************************************************************************
+'clsMean Class Module Code
+'This class has all the properties to hold inertia calculation data and the mean data.
+'The inertiaSum-prefix properties store the results of inertia calculation of a sample group.
+'The mean-prefix properties store the mean values of their respectove definition.
+'The currentWorkingSheet stores the current active sheet's code name to display the result of the calculation.
+'
+'This class has methods to display the data to Immediate window, any worksheet and the "Composite" part sheet.
+'**************************************************************************************************************************************
+
+
+Public weightTotal, xBar, yBar, zBar, inertiaSumIxx, inertiaSumIyy, inertiaSumIzz, inertiaSumIxy, inertiaSumIxz, inertiaSumIyz As Double
+Public meanWeightTotal, meanXcg, meanYcg, meanZcg, meanIxx, meanIyy, meanIzz, meanIxy, meanIxz, meanIyz As Double
+Public currentWorkingSheet As Worksheet
+Private Sub Class_Initialize()
+
+End Sub
+
+Public Sub DisplayToImmediate()
+    Debug.Print meanWeightTotal, meanXcg, meanYcg, meanZcg, meanIxx, meanIyy, meanIzz, meanIxy, meanIxz, meanIyz
+End Sub
+Public Sub DisplayToCurrentTab()
+    Dim decimalPlace As Integer: decimalPlace = 2
+    'Clear the display
+    'shDataPart1.Cells(startingRow, startingColumn).CurrentRegion.Offset(1).ClearContents
+    
+    ' Set the start row
+    Dim meanRow As Integer
+    meanRow = wrStartRow + 1
+ 
+         
+         currentWorkingSheet.Cells(meanRow, wcDisplayColumnStart).Value = "Mean"
+         currentWorkingSheet.Cells(meanRow, wcDisplayColumnStart + 1).Value = meanWeightTotal
+         currentWorkingSheet.Cells(meanRow, wcDisplayColumnStart + 2).Value = meanXcg
+         currentWorkingSheet.Cells(meanRow, wcDisplayColumnStart + 3).Value = meanYcg
+         currentWorkingSheet.Cells(meanRow, wcDisplayColumnStart + 4).Value = meanZcg
+         currentWorkingSheet.Cells(meanRow, wcDisplayColumnStart + 5).Value = meanIxx
+         currentWorkingSheet.Cells(meanRow, wcDisplayColumnStart + 6).Value = meanIyy
+         currentWorkingSheet.Cells(meanRow, wcDisplayColumnStart + 7).Value = meanIzz
+         currentWorkingSheet.Cells(meanRow, wcDisplayColumnStart + 8).Value = meanIxy
+         currentWorkingSheet.Cells(meanRow, wcDisplayColumnStart + 9).Value = meanIxz
+         currentWorkingSheet.Cells(meanRow, wcDisplayColumnStart + 10).Value = meanIyz
+    
+    'Format the cells to standard "0.00" (two decimal place)
+    utlFormatDecimalPlace meanRow, wcDisplayColumnStart, decimalPlace, currentWorkingSheet
+    
+End Sub
+Public Sub DisplayToComposite(startingColumn As Integer)
+    Dim Lastrow, startingRow, decimalPlace As Integer
+    Dim meanRow As Integer
+    Dim sht As Worksheet
+    
+    decimalPlace = 2
+    
+    'This code section is to find the empty row for the data to be displayed
+    Set sht = shComposite 'Code Name is used instead of Tab Name => Set sht = ThisWorkbook.Worksheets("Composite Parts")
+    Lastrow = utlLastRowColumn(sht, startingColumn, "Row")
+    meanRow = Lastrow + 1
+ 
+    Debug.Print meanRow
+    
+         shComposite.Cells(meanRow, startingColumn - 1).Value = currentWorkingSheet.Name 'To display part number shown on tab (sheet's name)
+         shComposite.Cells(meanRow, startingColumn).Value = "Mean"
+         shComposite.Cells(meanRow, startingColumn + 1).Value = meanWeightTotal
+         shComposite.Cells(meanRow, startingColumn + 2).Value = meanXcg
+         shComposite.Cells(meanRow, startingColumn + 3).Value = meanYcg
+         shComposite.Cells(meanRow, startingColumn + 4).Value = meanZcg
+         shComposite.Cells(meanRow, startingColumn + 5).Value = meanIxx
+         shComposite.Cells(meanRow, startingColumn + 6).Value = meanIyy
+         shComposite.Cells(meanRow, startingColumn + 7).Value = meanIzz
+         shComposite.Cells(meanRow, startingColumn + 8).Value = meanIxy
+         shComposite.Cells(meanRow, startingColumn + 9).Value = meanIxz
+         shComposite.Cells(meanRow, startingColumn + 10).Value = meanIyz
+    
+    'Format the cells to standard "0.00" (two decimal place)
+    utlFormatDecimalPlace meanRow, startingColumn, decimalPlace, currentWorkingSheet
+    
+End Sub
+'**************************************************************************************************************************************
+'clsNormalStdDev Class Module Code
+'This class has all the properties to hold standard deviation data from Normal (Gaussian) Distribution
+'The currentWorkingSheet stores the current active sheet's code name to display the result of the calculation.
+'
+'This class has methods to display the data to Immediate window, any worksheet and the "Composite" part sheet.
+'**************************************************************************************************************************************
+
+
+Public sdWeightTotal, sdXcg, sdYcg, sdZcg, sdIxx, sdIyy, sdIzz, sdIxy, sdIxz, sdIyz As Double
+Public currentWorkingSheet As Worksheet
+
+
+Private Sub Class_Initialize()
+
+End Sub
+
+Public Sub DisplayToImmediate()
+    Debug.Print sdWeightTotal, sdXcg, sdYcg, sdZcg, sdIxx, sdIyy, sdIzz, sdIxy, sdIxz, sdIyz
+End Sub
+Public Sub DisplayToCurrentTab()
+    Dim decimalPlace As Integer: decimalPlace = 4
+    'Clear the display
+    'shDataPart1.Cells(startingRow, startingColumn).CurrentRegion.Offset(1).ClearContents
+
+    ' Set the start row
+    Dim normalStdDevRow As Integer
+    normalStdDevRow = wrStartRow + 2
+    
+
+        ' write out the rows
+         
+         currentWorkingSheet.Cells(normalStdDevRow, wcDisplayColumnStart).Value = "Normal Std Dev"
+         currentWorkingSheet.Cells(normalStdDevRow, wcDisplayColumnStart + 1).Value = sdWeightTotal
+         currentWorkingSheet.Cells(normalStdDevRow, wcDisplayColumnStart + 2).Value = sdXcg
+         currentWorkingSheet.Cells(normalStdDevRow, wcDisplayColumnStart + 3).Value = sdYcg
+         currentWorkingSheet.Cells(normalStdDevRow, wcDisplayColumnStart + 4).Value = sdZcg
+         currentWorkingSheet.Cells(normalStdDevRow, wcDisplayColumnStart + 5).Value = sdIxx
+         currentWorkingSheet.Cells(normalStdDevRow, wcDisplayColumnStart + 6).Value = sdIyy
+         currentWorkingSheet.Cells(normalStdDevRow, wcDisplayColumnStart + 7).Value = sdIzz
+         currentWorkingSheet.Cells(normalStdDevRow, wcDisplayColumnStart + 8).Value = sdIxy
+         currentWorkingSheet.Cells(normalStdDevRow, wcDisplayColumnStart + 9).Value = sdIxz
+         currentWorkingSheet.Cells(normalStdDevRow, wcDisplayColumnStart + 10).Value = sdIyz
+    
+
+    'Format the cells to standard "0.00" (two decimal place)
+    utlFormatDecimalPlace normalStdDevRow, wcDisplayColumnStart, decimalPlace, currentWorkingSheet
+End Sub
+
+' clsInertia Class Module Code
+Public serialNumber As Integer
+Public mass, Xcg, Ycg, Zcg, Ixx, Iyy, Izz, Ixy, Ixz, Iyz As Double
+
+Option Explicit
+
+Private calculation As XlCalculation
+Private displayStatus As Boolean
+Private enableEvents As Boolean
+Private screenUpdating As Boolean
+
+' Procedure : TurnOffFunctionality
+' Purpose   : Backup Current settings
+' https://excelmacromastery.com/
+Public Sub Backup()
+    calculation = Application.calculation
+    displayStatus = Application.DisplayStatusBar
+    enableEvents = Application.enableEvents
+    screenUpdating = Application.screenUpdating
+End Sub
+
+' Procedure : TurnOffFunctionality
+' Purpose   : Backup Current settings
+' https://excelmacromastery.com/
+Public Sub Restore()
+    Application.calculation = calculation
+    Application.DisplayStatusBar = displayStatus
+    Application.enableEvents = enableEvents
+    Application.screenUpdating = screenUpdating
+End Sub
+
+' Purpose   : Turn off automatic calculations, events and screen updating
+' https://excelmacromastery.com/
+Public Sub TurnOff()
+
+    Call Backup
+    
+    Application.calculation = xlCalculationManual
+    Application.DisplayStatusBar = False
+    Application.enableEvents = False
+    Application.screenUpdating = False
+    
+End Sub
+
+' Purpose   : turn on automatic calculations, events and screen updating
+' https://excelmacromastery.com/
+Public Sub TurnOn()
+    Application.calculation = xlCalculationAutomatic
+    Application.DisplayStatusBar = True
+    Application.enableEvents = True
+    Application.screenUpdating = True
+End Sub
+
+'**************************************************************************************************************************************
+'clsCompMean Class Module Code
+'
+'**************************************************************************************************************************************
+Public meanCompWeight, meanCompXcg, meanCompYcg, meanCompZcg, meanCompIxx, meanCompIyy, meanCompIzz, meanCompIxy, meanCompIxz, meanCompIyz As Double
+Public currentWorkingSheet As Worksheet
+
+
+Private Sub Class_Initialize()
+
+End Sub
+
+Public Sub DisplayToImmediate()
+    Debug.Print meanCompWeight, meanCompXcg, meanCompYcg, meanCompZcg, meanCompIxx, meanCompIyy, meanCompIzz, meanCompIxy, meanCompIxz, meanCompIyz
+End Sub
+Public Sub DisplayToComposite(startingColumn As Integer)
+    Dim Lastrow, startingRow, decimalPlace As Integer
+    Dim meanRow As Integer
+    Dim sht As Worksheet
+
+    decimalPlace = 2
+
+    'This code section is to find an empty row for the data to be displayed
+    Set sht = shComposite 'Code Name is used instead of Tab Name => Set sht = ThisWorkbook.Worksheets("Composite Parts")
+    Lastrow = utlLastRowColumn(sht, startingColumn, "Row")
+    meanRow = Lastrow + 2
+    
+    'Assigning data to cells for display
+         shComposite.Cells(meanRow, startingColumn - 1).Value = currentWorkingSheet.Name 'To display part number shown on tab (sheet's name)
+         shComposite.Cells(meanRow, startingColumn).Value = "Combined"
+         shComposite.Cells(meanRow, startingColumn + 1).Value = meanCompWeight
+         shComposite.Cells(meanRow, startingColumn + 2).Value = meanCompXcg
+         shComposite.Cells(meanRow, startingColumn + 3).Value = meanCompYcg
+         shComposite.Cells(meanRow, startingColumn + 4).Value = meanCompZcg
+         shComposite.Cells(meanRow, startingColumn + 5).Value = meanCompIxx
+         shComposite.Cells(meanRow, startingColumn + 6).Value = meanCompIyy
+         shComposite.Cells(meanRow, startingColumn + 7).Value = meanCompIzz
+         shComposite.Cells(meanRow, startingColumn + 8).Value = meanCompIxy
+         shComposite.Cells(meanRow, startingColumn + 9).Value = meanCompIxz
+         shComposite.Cells(meanRow, startingColumn + 10).Value = meanCompIyz
+
+    'Format the cells to specified decimal place
+    utlFormatDecimalPlace meanRow, startingColumn, decimalPlace, currentWorkingSheet
+
+End Sub
+
+'**************************************************************************************************************************************
+'clsComposite Class Module Code
+'
+'**************************************************************************************************************************************
+
+
+Public partNumber, description1, meanMass, meanXcg, meanYcg, meanZcg, meanIxx, meanIyy, meanIzz, meanIxy, meanIxz, meanIyz As Double
+Public description2, sdMass, sdXcg, sdYcg, sdZcg, sdIxx, sdIyy, sdIzz, sdIxy, sdIxz, sdIyz As Double
+'Public currentWorkingSheet As Worksheet
+Private Sub Class_Initialize()
+
+End Sub
+
+Public Sub DisplayToImmediate()
+    Debug.Print partNumber, description1, meanMass, meanXcg, meanYcg, meanZcg, meanIxx, meanIyy, meanIzz, meanIxy, meanIxz, meanIyz
+    Debug.Print description2, sdMass, sdXcg, sdYcg, sdZcg, sdIxx, sdIyy, sdIzz, sdIxy, sdIxz, sdIyz
+End Sub
+Public Sub DisplayToComposite(startingColumn As Integer)
+    Dim Lastrow, startingRow, decimalPlace As Integer
+    Dim meanRow As Integer
+    Dim sht As Worksheet
+
+    decimalPlace = 2
+
+    'This code section is to find the empty row for the data to be displayed
+    Set sht = shComposite 'Code Name is used instead of Tab Name => Set sht = ThisWorkbook.Worksheets("Composite Parts")
+    Lastrow = utlLastRowColumn(sht, startingColumn, "Row")
+    meanRow = Lastrow + 1
+
+    Debug.Print meanRow
+
+         shComposite.Cells(meanRow, startingColumn - 1).Value = currentWorkingSheet.Name 'To display part number shown on tab (sheet's name)
+         shComposite.Cells(meanRow, startingColumn).Value = "Mean"
+         shComposite.Cells(meanRow, startingColumn + 1).Value = meanWeightTotal
+         shComposite.Cells(meanRow, startingColumn + 2).Value = meanXcg
+         shComposite.Cells(meanRow, startingColumn + 3).Value = meanYcg
+         shComposite.Cells(meanRow, startingColumn + 4).Value = meanZcg
+         shComposite.Cells(meanRow, startingColumn + 5).Value = meanIxx
+         shComposite.Cells(meanRow, startingColumn + 6).Value = meanIyy
+         shComposite.Cells(meanRow, startingColumn + 7).Value = meanIzz
+         shComposite.Cells(meanRow, startingColumn + 8).Value = meanIxy
+         shComposite.Cells(meanRow, startingColumn + 9).Value = meanIxz
+         shComposite.Cells(meanRow, startingColumn + 10).Value = meanIyz
+
+    'Format the cells to standard "0.00" (two decimal place)
+    utlFormatDecimalPlace meanRow, startingColumn, decimalPlace, currentWorkingSheet
+
+End Sub
+
+'**************************************************************************************************************************************
+'cls95PercentStdDev Class Module Code
+'This class has all the properties to hold the 95% standard deviation data from Student's t Distribution
+'The currentWorkingSheet stores the current active sheet's code name to display the result of the calculation.
+'
+'This class has methods to display the data to Immediate window, any worksheet and the "Composite" part sheet.
+'**************************************************************************************************************************************
+    
+    Public ninetyFivePctStdDevWeight, ninetyFivePctStdDevXcg, ninetyFivePctStdDevYcg, ninetyFivePctStdDevZcg As Double
+    Public ninetyFivePctStdDevIxx, ninetyFivePctStdDevIyy, ninetyFivePctStdDevIzz As Double
+    Public ninetyFivePctStdDevIxy, ninetyFivePctStdDevIxz, ninetyFivePctStdDevIyz As Double
+    Public currentWorkingSheet As Worksheet
+    
+    
+Private Sub Class_Initialize()
+
+End Sub
+Public Sub DisplayToImmediate()
+    Debug.Print ninetyFivePctStdDevWeight, ninetyFivePctStdDevXcg, ninetyFivePctStdDevYcg, ninetyFivePctStdDevZcg, ninetyFivePctStdDevIxx, ninetyFivePctStdDevIyy, ninetyFivePctStdDevIzz, ninetyFivePctStdDevIxy, ninetyFivePctStdDevIxz, ninetyFivePctStdDevIyz
+End Sub
+Public Sub DisplayToCurrentTab()
+    Dim decimalPlace As Integer: decimalPlace = 4
+    'Clear the display
+    'shDataPart1.Cells(startingRow, startingColumn).CurrentRegion.Offset(1).ClearContents
+
+    ' Set the start row
+    Dim ninetyFivePctStdDevRow As Integer
+    ninetyFivePctStdDevRow = wrStartRow + 3
+ 
+         
+         currentWorkingSheet.Cells(ninetyFivePctStdDevRow, wcDisplayColumnStart).Value = "95 % Std Dev"
+         currentWorkingSheet.Cells(ninetyFivePctStdDevRow, wcDisplayColumnStart + 1).Value = ninetyFivePctStdDevWeight
+         currentWorkingSheet.Cells(ninetyFivePctStdDevRow, wcDisplayColumnStart + 2).Value = ninetyFivePctStdDevXcg
+         currentWorkingSheet.Cells(ninetyFivePctStdDevRow, wcDisplayColumnStart + 3).Value = ninetyFivePctStdDevYcg
+         currentWorkingSheet.Cells(ninetyFivePctStdDevRow, wcDisplayColumnStart + 4).Value = ninetyFivePctStdDevZcg
+         currentWorkingSheet.Cells(ninetyFivePctStdDevRow, wcDisplayColumnStart + 5).Value = ninetyFivePctStdDevIxx
+         currentWorkingSheet.Cells(ninetyFivePctStdDevRow, wcDisplayColumnStart + 6).Value = ninetyFivePctStdDevIyy
+         currentWorkingSheet.Cells(ninetyFivePctStdDevRow, wcDisplayColumnStart + 7).Value = ninetyFivePctStdDevIzz
+         currentWorkingSheet.Cells(ninetyFivePctStdDevRow, wcDisplayColumnStart + 8).Value = ninetyFivePctStdDevIxy
+         currentWorkingSheet.Cells(ninetyFivePctStdDevRow, wcDisplayColumnStart + 9).Value = ninetyFivePctStdDevIxz
+         currentWorkingSheet.Cells(ninetyFivePctStdDevRow, wcDisplayColumnStart + 10).Value = ninetyFivePctStdDevIyz
+    
+    'Format the cells to standard "0.00" (two decimal place)
+    utlFormatDecimalPlace ninetyFivePctStdDevRow, wcDisplayColumnStart, decimalPlace, currentWorkingSheet
+    
+End Sub
+
+Public Sub DisplayToComposite(startingColumn As Integer)
+    Dim Lastrow, startingRow, decimalPlace As Integer
+    Dim ninetyFivePctStdDevRow As Integer
+    Dim sht As Worksheet
+    
+    decimalPlace = 2
+    
+    'This code section is to find the empty row for the data to be displayed
+    Set sht = shComposite 'Code name is used instead of tab name =>Set sht = ThisWorkbook.Worksheets("Composite Parts")
+    Lastrow = utlLastRowColumn(sht, startingColumn, "Row")
+  
+    
+    ninetyFivePctStdDevRow = Lastrow + 1
+ 
+    Debug.Print ninetyFivePctStdDevRow
+    
+         shComposite.Cells(ninetyFivePctStdDevRow, startingColumn).Value = "95 % Std Dev"
+         shComposite.Cells(ninetyFivePctStdDevRow, startingColumn + 1).Value = ninetyFivePctStdDevWeight
+         shComposite.Cells(ninetyFivePctStdDevRow, startingColumn + 2).Value = ninetyFivePctStdDevXcg
+         shComposite.Cells(ninetyFivePctStdDevRow, startingColumn + 3).Value = ninetyFivePctStdDevYcg
+         shComposite.Cells(ninetyFivePctStdDevRow, startingColumn + 4).Value = ninetyFivePctStdDevZcg
+         shComposite.Cells(ninetyFivePctStdDevRow, startingColumn + 5).Value = ninetyFivePctStdDevIxx
+         shComposite.Cells(ninetyFivePctStdDevRow, startingColumn + 6).Value = ninetyFivePctStdDevIyy
+         shComposite.Cells(ninetyFivePctStdDevRow, startingColumn + 7).Value = ninetyFivePctStdDevIzz
+         shComposite.Cells(ninetyFivePctStdDevRow, startingColumn + 8).Value = ninetyFivePctStdDevIxy
+         shComposite.Cells(ninetyFivePctStdDevRow, startingColumn + 9).Value = ninetyFivePctStdDevIxz
+         shComposite.Cells(ninetyFivePctStdDevRow, startingColumn + 10).Value = ninetyFivePctStdDevIyz
+    
+    'Format the cells to standard "0.00" (two decimal place)
+    utlFormatDecimalPlace ninetyFivePctStdDevRow, startingColumn, decimalPlace, currentWorkingSheet
+    
+End Sub
